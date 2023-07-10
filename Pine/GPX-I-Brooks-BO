@@ -1,0 +1,85 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I Brooks-BO 
+//  Author     :    Guy Pedashenko      Original creation date: 08-Jul-23       Latest version date: 08-Jul-23
+//  Version    :    v0.1
+//  Description:    Brooks Breakout bar identification
+//                  n Factor times bigger than the average bar size for the last x bars
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title = "Brooks-BO Bar", overlay = true)
+
+// Strategy Variables
+float iBOSizeFactor = 2.5
+int iNumberOfBars = 20
+int iATRBars = 20
+float sumOfCandleBody = 0
+float aveOfCandleBodies = 0
+float Close2ClosePercent = 0.20     // Percentage tail at close end of bar - 0.0 would be Close on High for a Bull bar
+float BigCandleBodyPercent = 0.60   // Percentage of the bar that the body makes up high % is a strong bar
+float TBarHeadPercent = 0.70        // Percentage Open and Close are away from high of low
+bool bStrongBar = false
+bool TBar = false
+bool bBOCriteriaMet = false
+
+atr = ta.atr(iATRBars)
+
+candleHeight = math.abs(high-low)
+candleBody = math.abs(open-close)
+barlow = math.abs(low)
+barhigh = math.abs(high)
+bool BullBar = close > open
+bool BearBar = close < open
+
+// Test Highest
+highestHigh = ta.highest(high, iNumberOfBars)
+lowestLows = ta.lowest(low, iNumberOfBars)
+
+// TBar calculation
+if ((math.abs(open)-math.abs(low)) > (candleHeight * TBarHeadPercent)) and ((math.abs(close)-math.abs(low)) > (candleHeight * TBarHeadPercent)) and low < lowestLows[1] //(low < low[1])
+    TBar := true
+if ((math.abs(high)-math.abs(open)) > (candleHeight * TBarHeadPercent)) and ((math.abs(high)-math.abs(close)) > (candleHeight * TBarHeadPercent)) and high > highestHigh[1]
+    TBar := true
+
+if BullBar
+    if math.abs(math.abs(high-close) / candleHeight) <= Close2ClosePercent and (candleBody / candleHeight > BigCandleBodyPercent)
+        bStrongBar := true    // Bull Bar strong calculation
+    else
+        bStrongBar := false     
+else
+    if (math.abs(math.abs(low-close) / candleHeight) <= Close2ClosePercent) and (candleBody / candleHeight > BigCandleBodyPercent)
+        bStrongBar := true     // Bear Bar strong calculation
+    else
+        bStrongBar := false    
+
+for offset = 1 to iNumberOfBars
+    candleHeight := math.abs(high[offset]-low[offset])
+    candleBody := math.abs(open[offset]-close[offset])
+    barlow := math.abs(low[offset])
+    barhigh := math.abs(high[offset])
+    sumOfCandleBody := sumOfCandleBody + candleBody
+
+aveOfCandleBodies := sumOfCandleBody / iNumberOfBars
+candleBody := math.abs(open-close)
+
+// Are the criteria for a BO bar met?
+if ((candleBody > (aveOfCandleBodies * iBOSizeFactor)) )
+    bBOCriteriaMet := true
+else
+    bBOCriteriaMet := false
+
+
+// Plot signals to chart
+plotshape(bBOCriteriaMet, location=location.belowbar, color=color.green, style=shape.labelup, text="BO" , textcolor=color.white, size=size.small)
+plotshape(bStrongBar, location=location.abovebar, color=color.rgb(186, 68, 57), style=shape.labeldown, text="STG" , textcolor=color.white, size=size.small)
+plotshape(TBar, location=location.belowbar, color=color.rgb(223, 78, 194), style=shape.labelup, text="TBar" , textcolor=color.white, size=size.small)
+
+//x = str.tostring(sumOfCandleBody)
+
+//plotshape(bearish180PCSignal, location=location.abovebar, color=color.red, style=shape.labeldown, text="180", textcolor=color.white, size=size.small)
+//plotshape(bullish8EMATouch, location=location.abovebar, color=color.rgb(82, 183, 255), style=shape.labeldown, text="T-8EMA", textcolor=color.white, size=size.small)
+//plotshape(bearish8EMATouch, location=location.belowbar, color=color.rgb(82, 183, 255), style=shape.labelup, text="T-8EMA", textcolor=color.white, size=size.small)
+
+
+// Send alerts
+//tradeAlert = bullish180PCSignal or bearish180PCSignal // GEMMA's Engulfing not part of my current Strategy --> or bullishEngulfingSignal or bearishEngulfingSignal
+//alertcondition(tradeAlert, title="GPX-180PC Trade Alert", message="GPX180PC Alert!")
