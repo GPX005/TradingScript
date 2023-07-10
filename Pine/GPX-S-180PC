@@ -1,0 +1,112 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script name:    "GPX-S 180 PC"
+//  Author     :    Guy Pedashenko      Original creation date: 01-Jul-23       Latest version date: 04-Jul-23
+//  Version    :    v0.2
+//  Description:    GPX Version of 180 PC strategy
+//                  .
+//-------------------------------------------------------------------------------------------------------------------------------------------
+strategy(title="GPX-S 180PC", overlay=true)
+import PineCoders/Time/3
+
+// Strategy Variables
+backtestStartDate = timestamp(2022,05,01)
+backtestEndDate = timestamp(2023,05,05)
+inTradeWindow =  ((time >= backtestStartDate) and (time < backtestEndDate))
+int iEMADistance = 25
+int iContracts = 5
+int iRiskReward = 1
+
+// Defined Horiztonal Support and Resistance Lines
+float fHorzSupLine1 = 1.052
+float fHorzSupLine2 = 1.09
+float fHorzSResLine1 = 100
+float fHorzSResLine2 = 100
+
+// Calculate inputs
+ema8 = ta.ema(close, 8)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+emaW1_08 = ta.ema(close,40)   // 8 bars x 5 days
+emaW1_20 = ta.ema(close,100)    // 20 bars x 5 days
+atr = ta.atr(14)
+
+emaDistance = math.abs(ema8 - ema20)*20000    // for JPY pairs
+bullishEMAAlignment = ema8 > ema20 and ema20 > ema50 //and emaDistance > iEMADistance //and emaW1_08 > emaW1_20
+bearishEMAAlignment = ema8 < ema20 and ema20 < ema50 //and emaDistance > iEMADistance //and emaW1_08 < emaW1_20
+
+candleHeight = math.abs(high-low)
+candleBody = math.abs(open-close)
+
+//Get bar height
+//barHeight = math.abs(high-low)
+//bodyHeight = math.abs(close-open)
+
+// Guy's 8 EMA touch - part 1
+barlow = math.abs(low)
+barhigh = math.abs(high)
+bullish8EMATouch = false
+bearish8EMATouch = false
+
+
+// Identify trigger candles
+//bullishEngulfingBar = candleBody > 0.5*candleHeight and open < close and open[1] > close[1] and close > open[1] and bullishEMAAlignment
+//bearishEngulfingBar = candleBody > 0.5*candleHeight and open > close and open[1] < close[1] and close < open[1] and bearishEMAAlignment
+
+//bullishEngulfingBar = close >= open[1] and close[1] < open[1]      GPX Commented this out because it was causing an error
+//bullishEngulfingSignal = bullishEngulfingBar and bullishEMAAlignment
+//bearishEngulfingSignal = bearishEngulfingBar and bearishEMAAlignment
+
+
+bullish180PCSignal = low < low[1] and high < high[1] and bullishEMAAlignment 
+bearish180PCSignal = low > low[1] and high > high[1] and bearishEMAAlignment 
+
+// Guy's 8 EMA touch - part 2
+if (bullish180PCSignal and barlow <= ema8)
+    bullish8EMATouch := true
+else
+    if (bearish180PCSignal and barhigh >= ema8)
+        bearish8EMATouch := true
+
+plotshape(bullish180PCSignal, location=location.belowbar, color=color.green, style=shape.labelup, text="180", textcolor=color.white, size=size.small)
+plotshape(bearish180PCSignal, location=location.abovebar, color=color.red, style=shape.labeldown, text="180", textcolor=color.white, size=size.small)
+
+// Guy's 8 EMA touch - part 3
+plotshape(bullish8EMATouch, location=location.abovebar, color=color.rgb(82, 183, 255), style=shape.labeldown, text="T-8EMA", textcolor=color.white, size=size.small)
+plotshape(bearish8EMATouch, location=location.belowbar, color=color.rgb(82, 183, 255), style=shape.labelup, text="T-8EMA", textcolor=color.white, size=size.small)
+
+// -----------  GPX Commenting this Engulfing stuff out for the time being - maybe add this back later.  --------------------------
+//plotshape(bullishEngulfingSignal, location=location.belowbar, color=color.green, style=shape.labelup, text="Eng", textcolor=color.white, size=size.small)
+//plotshape(bearishEngulfingSignal, location=location.abovebar, color=color.red, style=shape.labeldown, text="Eng", textcolor=color.white, size=size.small)
+
+longCondition = bullish8EMATouch and (strategy.opentrades == 0)
+shortCondition = bearish8EMATouch and (strategy.opentrades == 0)
+//longCondition = close > fHorzSupLine1 and (strategy.opentrades == 0) and (close[1] < fHorzSupLine1)
+
+
+if (longCondition and inTradeWindow)
+    stopLoss = low[1] - 1
+    takeProfit = high[2] + 1 + (atr * iRiskReward)
+    //stopLoss = low - atr * 1
+    //takeProfit = high + atr * iRiskReward
+    //takeProfit = fHorzSupLine2
+    //strategy.entry("long", strategy.long, 100, when = close < h1gpx)
+    strategy.entry("long", strategy.long, iContracts)
+    strategy.exit("exit", "long", stop=stopLoss, limit=takeProfit)
+
+if (shortCondition and inTradeWindow)
+    stopLoss = high + 1
+    takeProfit = low[2] - 1 - (atr * iRiskReward)
+    //stopLoss = high + atr * 1
+    //takeProfit = low - atr * iRiskReward
+    //takeProfit = fHorzSupLine2
+    //strategy.entry("long", strategy.long, 100, when = close < h1gpx)
+    strategy.order("short", strategy.short, iContracts, limit=low[1]-1,stop=stopLoss)
+    //strategy.entry("short", strategy.short, iContracts)
+    strategy.exit("exit", "short", stop=stopLoss, limit=takeProfit)
+
+// Plot averages to chart
+plot(ema8, color=color.yellow, linewidth=2)
+plot(ema20, color=color.blue, linewidth=2)
+plot(ema50, color=color.red, linewidth=2)
+//plot(fHorzSupLine1, color=color.rgb(214, 30, 134), linewidth=1)
