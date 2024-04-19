@@ -1,0 +1,129 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I TBar+ V6.1 (Indicator) -> TBAR that Really Stick Out
+//  Author     :    Guy Pedashenko      Original creation date: 07-Mar-24       Latest version date: 23-Mar-24
+//  Version    :    v6.1.4
+//  Description:    T-Bars Looser TBAR Head Rule, TBAR sticks out from prevous Bar by > 30% of TBAR size and 20% of Previous bar size
+//                  240315: Added Data Plot for Entry Price 
+//                  
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title="TBAR-V6.1 Indicator", overlay=true)
+// Strategy Parameters             
+int iNumberOfBars = 1               // The default number of bars looking backwards in determining the T-Bar is lowest or highest in this perios
+float TBarHeadPercent = 0.55        // Percentage Open and Close are away from high of low
+
+// Strategy Variables
+bool LowTBar = false
+bool HighTBar = false
+bool FollowThrough = false          // Follow Through bar - post TBar flag
+bool TwoTBARWarning = false
+bool TBARCloseDirection = false     // For LowTBar Close higher than Open, for HighTBar Close Lower than Open (or equal)
+candleHeight = math.abs(high-low)
+candleBody = math.abs(open-close)
+barlow = math.abs(low)
+barhigh = math.abs(high)
+barAve = ta.atr(30)                // Average Bar size for the last 30 bars
+float Comp2Ave = 0                 // Compare this BAR to the 30 bar average
+float TBAR4Risk = 0
+float TBAR4Reward = 0
+float TBAR_SO = 0                   // Number of Pips TBAR sticks out from Previous Bar
+float TBAR_SO_PercOf_TBAR = 0       // Percentage that number of Pips is compared to TBAR 
+float TBAR_SO_PercOf_PREV = 0       // Percentage that number of Pips is compared to Previous Bar
+float OneDayTradingGain = 0         // For XLS export - calulate 1 Day trading gain post TBAR
+float TBAR_Close_Direction = 0
+float TBAR_Is_Direction_Switch = 0  // Set to 1 if TBAR is switch in direction from Previous Bar
+float TBAR_HeadDepth = 0            // Measure Head depth against previous Bar.
+float TBAR_Head_Size = 0            // Measures TBAR head size as a % of the TBAR
+float TBAR_OC_Closer2End = 0        // Set to either the Open or Close price of TBAR - used to calculate Head Size
+float TBAR_StopLossPrice = 0        // Suggested Stop Loss price for trade (Based on 50% method)
+float TBAR_FT_HiLo = 0              // Difference between Signal Bar and FT Bar Low to Low or High to High. Trying to find Number of pips to avoice common losses.
+
+// Check we are in a TREND 
+ema8 = ta.ema(close, 8)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+
+// Test Highest
+highestHigh = ta.highest(high, iNumberOfBars)
+lowestLows = ta.lowest(low, iNumberOfBars)
+
+Comp2Ave := (candleHeight / barAve) * 100
+
+
+// TBar calculation
+if ((math.abs(open)-math.abs(low)) > (candleHeight * TBarHeadPercent)) and ((math.abs(close)-math.abs(low)) > (candleHeight * TBarHeadPercent)) and low < lowestLows[1] 
+    LowTBar := true
+    TBAR_SO := low[1] - low
+    TBARCloseDirection := close > open
+    TBAR_HeadDepth := ((high - low[1]) / candleHeight[1]) * 100
+    TBAR_StopLossPrice := high - (candleHeight / 2)
+    if (high - open) > (high - close)
+        TBAR_OC_Closer2End := open
+    else
+        TBAR_OC_Closer2End := close
+    TBAR_Head_Size := ((high - TBAR_OC_Closer2End)/candleHeight) * 100
+    if close > open
+        TBAR_Close_Direction := 1
+
+if ((math.abs(high)-math.abs(open)) > (candleHeight * TBarHeadPercent)) and ((math.abs(high)-math.abs(close)) > (candleHeight * TBarHeadPercent)) and high > highestHigh[1]
+    HighTBar := true
+    TBAR_SO := high - high[1]
+    TBARCloseDirection := close < open
+    TBAR_HeadDepth := ((high[1] - low) / candleHeight[1]) * 100
+    TBAR_StopLossPrice := low + (candleHeight / 2)
+    if (open - low) > (close - low)
+        TBAR_OC_Closer2End := open
+    else
+        TBAR_OC_Closer2End := close
+    TBAR_Head_Size := ((TBAR_OC_Closer2End - low)/candleHeight) * 100
+    if close < open
+        TBAR_Close_Direction := 1
+
+if ((close > open) and (close[1] < open[1]) or (close < open) and (close[1] > open[1]))
+    TBAR_Is_Direction_Switch := 1
+
+TBAR_SO_PercOf_TBAR := (TBAR_SO / candleHeight) * 100
+TBAR_SO_PercOf_PREV := (TBAR_SO / candleHeight[1]) * 100
+
+if LowTBar[1]    // Calculate if Trading Gain post TBAR (As a Percentage of CandleHeight)
+    OneDayTradingGain := ((high - high[1]) / candleHeight[1]) * 100
+    TBAR_FT_HiLo := (high - high[1])
+
+
+if HighTBar[1]   // Calculate if Trading Gain post TBAR
+    OneDayTradingGain := ((low[1] - low) / candleHeight[1]) * 100
+    TBAR_FT_HiLo := (low[1] - low)
+
+if LowTBar[1]  and HighTBar   // check for Follow through bar post a TBar
+    // Maybe a warning if HighBar follows LowBar 
+    TwoTBARWarning := true
+
+if HighTBar[1] and LowTBar   // check for Follow through bar post a TBar
+    // Maybe a warning if LowBar follows HighBar 
+    TwoTBARWarning := true
+
+// Plot signals to chart
+plotshape(LowTBar , title="LowTBar", location=location.belowbar, color=color.rgb(223, 78, 194), style=shape.labelup, text="TBar" , textcolor=color.white, size=size.small)
+plotshape(HighTBar ,  title="HighTBar",location=location.abovebar, color=color.rgb(223, 78, 194), style=shape.labeldown, text="TBar" , textcolor=color.white, size=size.small)
+//plot(candleHeight, "Candle Size",color=na)
+plot(TBAR_Close_Direction, "Open-Close Direction Good",color=na)
+plot(TBAR_Is_Direction_Switch, "Direction Switch",color=na)
+//plot(TBAR_SO, "TBAR Stick Out (SO) Size",color=na)
+plot(Comp2Ave, "Candle % Ave[30]",color=na)
+//plot(TBAR_SO_PercOf_PREV, "PREV Bar SO%",color=na)
+plot(TBAR_HeadDepth, "Head Depth %",color=na)
+plot(TBAR_Head_Size, "Head Size %",color=na)
+plot(TBAR_SO_PercOf_TBAR, "TBAR SO %",color=na)
+plot(OneDayTradingGain, "1DayTradingGain",color=na)
+plot(TBAR_FT_HiLo, "TBAR_FT_HiLo",color=na)
+plot(TBAR_StopLossPrice, "Trade Stop Loss Price",color=na)
+
+//plotshape(FollowThrough,  title="ThurBar",location=location.bottom, color=color.rgb(78, 177, 223), style=shape.labelup, text="FT" , textcolor=color.white, size=size.small)
+
+plot(ema8,"ema8",color=color.rgb(235, 221, 35))
+plot(ema20,"ema20",color=color.rgb(74, 102, 231))
+plot(ema50,"ema50",color=color.rgb(241, 12, 12))
+
+// Send alerts
+tradeAlert = LowTBar or HighTBar  // or FollowThrough
+alertcondition(tradeAlert, title="TBar-V6.1 Alert", message="TBar-V6.1 Alert!")
