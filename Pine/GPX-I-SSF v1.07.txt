@@ -1,0 +1,122 @@
+//@version=6
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I-SSF (Indicator) 
+//  Author     :    Guy Pedashenko      Original creation date: 27-Feb-25       Latest version date: 27-Feb-25
+//  Version    :    v1.07
+//  Description:   Simulating Shark Algo
+//                  - EMA 8-20-50 Crossing
+//                  - MACD Crossing
+//                         
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title="GPX-I-SSF", shorttitle="GPX-I-SSF v1.07", overlay=true, timeframe="", timeframe_gaps=true)
+
+bool EMACross = false
+bool EMA820CrossLong = false
+bool EMA820CrossShort = false
+bool macFalling = false
+bool macRising = false
+bool macCrossLong = false
+bool macCrossShort = false
+bool macIsLong = false
+bool macIsShort = false
+bool stuffToShowLong = false
+bool stuffToShowShort = false
+bool EMAlongCondition = false
+bool EMAshortCondition = false
+bool showTrendlable = false
+showlable = input(title = "Show Label", defval = true)
+
+//use50EMA = input(title = "Use 50 EMA in Cross", defval = false)
+
+// EMA Calcs
+len8 = 8
+len20 = 20
+len50 = 50
+src = close
+offset = 0
+out8 = ta.ema(src, len8)
+out20 = ta.ema(src, len20)
+out50 = ta.ema(src, len50)
+plot(out8, title="EMA08", color=color.rgb(196, 216, 17), offset=offset)
+plot(out20, title="EMA20", color=color.rgb(59, 102, 194), offset=offset)
+plot(out50, title="EMA50", color=color.rgb(233, 10, 39), offset=offset)
+
+// Use EMA's to work out if in Trend
+if out8 >= out20 and out20 >= out50
+    EMAlongCondition := true
+    showTrendlable := true
+    if EMAlongCondition[1]
+        showTrendlable := false
+if out8 <= out20 and out20 <= out50
+    EMAshortCondition := true
+    showTrendlable := true
+    if EMAshortCondition[1]
+        showTrendlable := false
+
+// EMAs (8 + 20) Crossing Long or Short
+if out8 >= out20 and out8[1] < out20[1]
+    EMA820CrossLong := true
+
+if out8 <= out20 and out8[1] > out20[1]
+    EMA820CrossShort := true
+
+//if (longCondition and inTradeWindow)  - Show TREND Triangle
+showlonglable = EMAlongCondition and showTrendlable
+showshortlable = EMAshortCondition and showTrendlable
+
+plotshape(showlonglable, style=shape.triangleup, location=location.bottom, color=#0fdb0f, size=size.small )
+plotshape(showshortlable, style=shape.triangledown, location=location.top, color=#f51909, size=size.small )
+
+// MACD Calcs
+fast_length = input(title = "Fast Length", defval = 16)
+slow_length = input(title = "Slow Length", defval = 22)
+signal_length = input.int(title = "Signal Smoothing",  minval = 1, maxval = 50, defval = 9 )
+macsrc = close
+fast_ma = ta.ema(macsrc, fast_length)
+slow_ma = ta.ema(macsrc, slow_length)
+macd = fast_ma - slow_ma
+signal = ta.ema(macd, signal_length)
+hist = macd - signal  // math.abs()
+
+if (hist[1] >= 0 and hist < 0)     // The MACD histogram switched from a rising to falling state
+    macFalling := true
+
+if (hist[1] <= 0 and hist > 0)     // The MACD histogram switched from a falling to rising state
+    macRising := true
+
+if (macd > signal and macd[1] < signal[1])
+    macCrossLong := true
+
+if (macd < signal and macd[1] > signal[1])
+    macCrossShort:= true
+
+// Is there an indicator to show? - If so what lable should it be
+if (macCrossLong or EMA820CrossLong) and showlable
+    stuffToShowLong := true
+    
+if (macCrossShort or EMA820CrossShort) and showlable
+    stuffToShowShort := true
+
+if (stuffToShowLong and macd > 0)
+    macIsLong := true
+
+if (stuffToShowShort and macd < 0)
+    macIsShort := true
+
+// Plot LONGs
+plotshape(stuffToShowLong and EMA820CrossLong,  title="E",location=location.belowbar, color=color.rgb(121, 233, 129), style=shape.labelup, text="E" , textcolor=#0f2c01, size=size.small)
+plotshape(stuffToShowLong and macCrossLong,  title="M",location=location.belowbar, color=color.rgb(85, 160, 92), style=shape.labelup, text="M" , textcolor=color.white, size=size.small)
+plotshape(stuffToShowLong and macCrossLong and macRising,  title="M+",location=location.belowbar, color=#318a38, style=shape.labelup, text="M+" , textcolor=color.white, size=size.small)
+plotshape(stuffToShowLong and macCrossLong and macIsLong and EMA820CrossLong,  title="EM+",location=location.belowbar, color=#1e4d22, style=shape.labelup, text="EM+" , textcolor=color.white, size=size.small)
+plotshape(stuffToShowLong and macIsLong and EMA820CrossLong and macRising ,  title="EM++",location=location.belowbar, color=color.rgb(8, 150, 20), style=shape.labelup, text="EM++" , textcolor=color.white, size=size.small)
+//plotshape(macCrossLong,  title="XXX",location=location.belowbar, color=color.rgb(150, 8, 126), style=shape.labelup, text="MMMMMXMMMM" , textcolor=color.white, size=size.small)
+// Plot SHORTs
+plotshape(stuffToShowShort and EMA820CrossShort,  title="E",location=location.abovebar, color=color.rgb(241, 135, 13), style=shape.labeldown, text="E" , textcolor=#0f2c01, size=size.small)
+plotshape(stuffToShowShort and macCrossShort ,  title="M",location=location.abovebar, color=#ee4324, style=shape.labeldown, text="M" , textcolor=color.white, size=size.small)
+plotshape(stuffToShowShort and macCrossShort and macFalling ,  title="M+",location=location.abovebar, color=color.rgb(180, 41, 37), style=shape.labeldown, text="M+" , textcolor=color.white, size=size.small)
+plotshape(stuffToShowShort and macCrossShort and macIsShort and EMA820CrossShort,  title="EM+",location=location.abovebar, color=#a50707, style=shape.labeldown, text="EM+" , textcolor=color.white, size=size.small)
+plotshape(stuffToShowShort and macIsShort and EMA820CrossShort and macFalling ,  title="EM++",location=location.abovebar, color=#ee0404, style=shape.labeldown, text="EM++" , textcolor=color.white, size=size.small)
+
+//plotshape(stuffToShowShort and showlable, title=sTitle, location=location.abovebar, color=color.rgb(216, 33, 33), style=shape.labeldown, text=sTitle , textcolor=color.white, size=size.small)
+
+alertcondition(showlonglable or showshortlable, title = 'SSF-Alert', message = 'SSF-Alert')

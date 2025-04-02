@@ -1,0 +1,62 @@
+//@version=6
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I-6xEMA (Indicator) 
+//  Author     :    Guy Pedashenko      Original creation date: 14-Mar-25       Latest version date: 14-Mar-25
+//  Version    :    v1.00
+//  Description:   Multiple (6) EMA Crossing indicator.  Designed by Hansa - based on 1 hour chart.
+//                  - If all EMA's aligned - Tred indicator (potenital entry price) - alert available
+//                                        
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title="GPX-I-6xEMA", shorttitle="GPX-I-6xEMA v1.00", overlay=true, timeframe="", timeframe_gaps=true)
+
+// Set up indicator variables
+bool EMAlongCondition = false
+bool EMAshortCondition = false
+bool showTrendlable = true
+showlable = input(title = "Show Label", defval = true)
+ema1 = input(title = "EMA1", defval = 8)
+ema2 = input(title = "EMA2", defval = 20)
+ema3 = input(title = "EMA3", defval = 50)
+ema4 = input(title = "EMA4", defval = 192)
+ema5 = input(title = "EMA5", defval = 480)
+ema6 = input(title = "EMA6", defval = 1200)
+
+// EMA Calcs & Plots
+src = close
+offset = 0
+emaline1 = ta.ema(src, ema1)
+emaline2 = ta.ema(src, ema2)
+emaline3 = ta.ema(src, ema3)
+emaline4 = ta.ema(src, ema4)
+emaline5 = ta.ema(src, ema5)
+emaline6 = ta.ema(src, ema6)
+
+//fill(plot(emaline1), plot(emaline2), color=#e9e61e31)
+plot(emaline1, title="EMA01", color=color.rgb(196, 216, 17), offset=offset)
+plot(emaline2, title="EMA02", color=color.rgb(59, 102, 194), offset=offset)
+plot(emaline3, title="EMA03", color=color.rgb(233, 10, 39), offset=offset)
+plot(emaline4, title="EMA04", color=#f5740b, offset=offset)
+plot(emaline5, title="EMA05", color=#8a0af3, offset=offset)
+plot(emaline6, title="EMA06", color=color.rgb(245, 14, 195), offset=offset)
+//fill(plot(emaline1), plot(emaline2), color=color.new(color.green, 90))
+
+// Set up condition where all EMA's are aligned in one direction for a Trend
+if ((emaline1 > emaline2) and (emaline2 > emaline3) and (emaline3 > emaline4) and (emaline4 > emaline5) and (emaline5 > emaline6))
+    EMAlongCondition := true
+
+if ((emaline1 < emaline2) and (emaline2 < emaline3) and (emaline3 < emaline4) and (emaline4 < emaline5) and (emaline5 < emaline6))
+    EMAshortCondition := true
+
+if EMAshortCondition[1]
+    showlable := false
+
+if EMAlongCondition[1]
+    showlable := false
+
+showlonglable = EMAlongCondition and showlable
+showshortlable = EMAshortCondition and showlable
+
+plotshape(showlonglable, style=shape.triangleup, location=location.bottom, color=#0fdb0f, size=size.small )
+plotshape(showshortlable, style=shape.triangledown, location=location.top, color=#f51909, size=size.small )
+
+alertcondition(EMAlongCondition or EMAshortCondition, title = '6xEMA-Alert', message = '6xEMA-Alert')

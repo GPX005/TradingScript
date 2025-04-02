@@ -1,0 +1,42 @@
+//@version=6
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I-Impulse (Indicator) 
+//  Author     :    Guy Pedashenko      Original creation date: 16-Mar-25       Latest version date: 16-Mar-25
+//  Version    :    v1.00
+//  Description:    Measure an Impulsive Move over a number or bars for timespan.  Designed for Hong Kong - King Fu Kick
+//                  - 
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title="GPX-I-Impulsive-Move v1.00", shorttitle="GPX-I-Impulsive-Move v1.00", overlay=true, format=format.price, precision=2)
+
+// Parameters & Variables
+iNumberOfBars = input.int(20, minval=1, title="Number of Bars")
+string TradeLabelText = ""
+bool inTimeWindow = false
+
+// Define the time window
+nBTStart = input.int(3, minval=1, maxval=23, title="Broker Time TW Start")     // Broker Time 1 = 9am  So 11am = 3 & 1pm = 5
+nBTEnd = input.int(4, minval=1, maxval=23, title="Broker Time TW End")        // Broker Time 1 = 9am
+brokerTime = hour(time)
+if brokerTime >= nBTStart and brokerTime <= nBTEnd
+    inTimeWindow := true
+
+
+// Here comes the Maths bit 
+highestHigh = ta.highest(high, iNumberOfBars)
+lowestLows = ta.lowest(low, iNumberOfBars)
+ticksPerPoint = syminfo.mintick  // Minimum tick size for the symbol
+moveTicks = (highestHigh - lowestLows) / ticksPerPoint / 10
+nBarSize = high-low
+
+if (inTimeWindow)
+    TradeLabelText := str.format("{0,number,#}", moveTicks)
+    label.new(bar_index, low-1, text=TradeLabelText, color=color.rgb(6, 82, 3), style=label.style_label_up,textcolor=color.rgb(244, 248, 244), size = size.small)
+
+
+bgcolor(inTimeWindow ? color.new(color.purple, 75) : na, title="In the Zone")
+
+// For XLS data use Plot with no colour
+plot(moveTicks, "moveTicks",color=color.rgb(6, 82, 3))    //color=na
+plot(brokerTime, "Broker time", color=na)
+
+// END

@@ -1,0 +1,243 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I-BOLSTOPA (Indicator) 
+//  Author     :    Guy Pedashenko      Original creation date: 16-Nov-24       Latest version date: 06-Jan-25
+//  Version    :    v1.40
+//  Description:    Stochastic in OBOS zone + SPA identified  + Touching Bolli Band + @ Level (Human discretion)
+//                  - Publish Object data for ATR (iNumBars)
+//                  - 
+//                         
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title="GPX-I-BOLSTOPA v1.40", shorttitle="GPX-I-BOLSTOPA v1.40", overlay=true, format=format.price, precision=2, timeframe="", timeframe_gaps=true)
+
+// Strategy Parameters             
+bool LowStochCross = false     // Out of the middle zone low
+bool HighStochCross  = false   // Out of the middle zone high
+bool bbBuySignal = false
+bool bbSellSignal = false
+bool tradeAlert = false
+bool longCondition = false
+bool shortCondition = false
+int  iNumberOfBars = 3                      // The number of bars looking backwards in determining the T-Bar is lowest or highest in this perios
+float TBarHeadPercent = 0.55                 // Percentage Open and Close are away from high of low
+float TBarTailPercent = 0.60                // Percentage of TBar tail length compard to hight of whole bar
+float TrainHeadPercent = 0.33               // Percentage Open and Close are away from high of low for Train Track Bars
+float BiggestTrainBar = 0
+float RewardFactor = 1.1                    // Risk:Reward ratio (Reward Number)
+float SLFactor = 1                          // SL Factor for chaning it based on ATR
+int iContracts = 15000
+
+// Strategy Variables
+bool LowTBar = false
+bool HighTBar = false
+bool BullTrain = false
+bool BearTrain = false
+bool BullEngulfing = false
+bool BearEngulfing = false
+bool RingLow = false
+bool RingHigh = false
+bool gpxbBullSPA = false
+bool gpxbBearSPA = false
+bool LQCBull1 = false               // Liquidity Candel Bullish
+bool LQCBear1 = false               // Liquidity Candel Bearish
+bool LQCBull2 = false               // Liquidity Candel Bullish
+bool LQCBear2 = false               // Liquidity Candel Bearish
+bool LQCBull3 = false               // Liquidity Candel Bullish
+bool LQCBear3 = false               // Liquidity Candel Bearish
+bool LQCBull4 = false               // Liquidity Candel Bullish
+bool LQCBear4 = false               // Liquidity Candel Bearish
+bool LQCBull5 = false               // Liquidity Candel Bullish
+bool LQCBear5 = false               // Liquidity Candel Bearish
+float SLPips = 0                    // Pips from Entry price to SL
+float SLPrice = 0                   // Actual SL Price
+float TPPips = 0                    // Pips from Entry price to TP
+float TPPrice = 0                   // Actual TP Price
+float EntryPrice = 0                // Entry Price
+float stopLoss = 0
+float takeProfit = 0
+iNumBars = input.int(5)
+float fATR = ta.atr(iNumBars)
+float ARTPercent = 0
+float gpfSLATR = 0
+float gpxfTradeProfit = 0
+float gpxfReportTradeProfit = 0
+int PipFactor = 0
+string TradeLabelText = "Trade"     // Trade Data Label text
+string SecrurityCode = str.substring(syminfo.ticker,0,6) 
+//PipFactor := 100000                 // Default PipFactor
+
+//-------- Set up Time window ------------------
+// Define the time window
+sTimeWindow = input.string("0800-1130:1234567", title="Time WIndow")     // 0800-1030:1234567 = 05:00pm to 08:30 pm Aussie time
+inTimeWindow = time(timeframe.period, sTimeWindow)   // Times are GMT  06:00am t0 09:30pm
+brokerTime = hour(time)
+plot(brokerTime, "Broker time", color=na)
+
+// ------ Bolli Band set up --------
+bblength = input.int(20, minval=1)
+bbmaType = "SMA"
+bbsrc = close
+bbmult = 2.0
+basis = ta.sma(bbsrc, bblength)
+dev = bbmult * ta.stdev(bbsrc, bblength)
+bbsell = basis + dev
+bbbuy = basis - dev
+bboffset = 0
+plot(basis, "Basis", color=#2962FF, offset = bboffset)
+p1 = plot(bbsell, "BB Upper", color=#F23645, offset = bboffset)
+p2 = plot(bbbuy, "BB Lower", color=#089981, offset = bboffset)
+
+// ------ EMA set up --------
+src = close
+offset = 0
+lenEMA = input.int(50, minval=1, title="LengthEMA")
+outEMA = ta.ema(src, lenEMA)
+plot(outEMA, title="EMA", color=color.rgb(233, 10, 39), offset=offset)
+// ------ Stochastic set up --------
+periodK = input.int(9, title="%K Length", minval=1)
+smoothK = input.int(4, title="%K Smoothing", minval=1)
+periodD = input.int(4, title="%D Smoothing", minval=1)
+labelson = input.bool(true, title="Show SPA lables")
+lqlabelson = input.bool(true, title="Show LQ lables")
+k = ta.sma(ta.stoch(close, high, low, periodK), smoothK)
+d = ta.sma(k, periodD)
+//plot(k, title="%K", color=#2962FF)
+//plot(d, title="%D", color=#FF6D00)
+h0 = hline(80, "Upper Band", color=#787B86)
+//hline(50, "Middle Band", color=color.new(#787B86, 50))
+h1 = hline(20, "Lower Band", color=#787B86)
+fill(h0, h1, color=color.rgb(33, 150, 243, 90), title="Background")
+
+// StochCross calculation - Really Stoch Comming back into the Zone
+if (k <= 20 or k[1] <=20)  
+    LowStochCross := true
+if (k >= 80 or k[1] >= 80) 
+    HighStochCross := true
+
+// Bolli Band calculation
+if (bbsell <= high)  
+    bbSellSignal := true
+if (bbbuy >= low)  
+    bbBuySignal := true
+
+//------------------------- Calculation specific variables --------------------------------------
+candleHeight = math.abs(high-low)
+candleBody = math.abs(open-close)
+ARTPercent := candleHeight  /fATR * 100
+plot(candleHeight,"Candle Size", color = na)
+plot(fATR, title="ATR",color=na)
+plot(ARTPercent, "ART%", color=na)
+barlow = math.abs(low)
+barhigh = math.abs(high)
+BullBar = math.abs(open) < math.abs(close)
+BearBar = math.abs(open) > math.abs(close)
+// Train Track calculation variables
+BullBarLow2Open = math.abs(open) - math.abs(low)
+BullBarHigh2Close = math.abs(high) - math.abs(close)
+BearBarHigh2Open = math.abs(high) - math.abs(open)
+BearBarLow2Close = math.abs(close) - math.abs(low)
+
+// Test Highest
+highestHigh = ta.highest(high, iNumberOfBars)
+lowestLows = ta.lowest(low, iNumberOfBars)
+// TBar calculation
+if ((math.abs(open)-math.abs(low)) > (candleHeight * TBarTailPercent)) and ((math.abs(close)-math.abs(low)) > (candleHeight * TBarTailPercent)) and low < lowestLows[1] 
+    LowTBar := true and LowStochCross and inTimeWindow
+if ((math.abs(high)-math.abs(open)) > (candleHeight * TBarTailPercent)) and ((math.abs(high)-math.abs(close)) > (candleHeight * TBarTailPercent)) and high > highestHigh[1]
+    HighTBar := true and HighStochCross and inTimeWindow
+// Train Tracks calculations    -----> More testing required.
+if candleHeight > candleHeight[1]               // Get the biggest candel out fo the two.
+    BiggestTrainBar := candleHeight
+else    
+    BiggestTrainBar := candleHeight[1]
+if (BearBar[1] and ((BearBarHigh2Open[1]/candleHeight[1]) <= TrainHeadPercent) and ((BearBarLow2Close[1]/candleHeight[1]) <= TrainHeadPercent)) and (BullBar and ((BullBarLow2Open/candleHeight) <= TrainHeadPercent) and ((BullBarHigh2Close/candleHeight) <= TrainHeadPercent)) 
+    if (math.abs(math.abs(close) - math.abs(low[1])) / BiggestTrainBar >= TBarTailPercent )
+        BullTrain := true and LowStochCross and inTimeWindow
+if (BullBar[1] and ((BullBarLow2Open[1]/candleHeight[1]) <= TrainHeadPercent) and ((BullBarHigh2Close[1]/candleHeight[1]) <= TrainHeadPercent)) and (BearBar and ((BearBarHigh2Open/candleHeight) <= TrainHeadPercent) and ((BearBarLow2Close/candleHeight)<= TrainHeadPercent)) 
+    if (math.abs(math.abs(close) - math.abs(high[1])) / BiggestTrainBar >= TBarTailPercent )
+        BearTrain := true and HighStochCross and inTimeWindow
+// Engulfing Bar calculations
+if (math.abs(high) > math.abs(high[1])) and (math.abs(low) < math.abs(low[1])) and (BullBar)    //Future modification to identify Stong Bars.
+    BullEngulfing := true and LowStochCross and inTimeWindow
+if (math.abs(high) > math.abs(high[1])) and (math.abs(low) < math.abs(low[1])) and (BearBar)
+    BearEngulfing := true and HighStochCross and inTimeWindow
+// Potential Ring Low/High calculations
+if (math.abs(low) < math.abs(low[1]) and  math.abs(high) < math.abs(high[1]) )
+    RingLow := true and LowStochCross and inTimeWindow 
+if (math.abs(low) > math.abs(low[1]) and  math.abs(high) > math.abs(high[1]) )
+    RingHigh := HighStochCross and inTimeWindow
+// Liquidity Candle calculations
+if ( BearBar[1] and BullBar and math.abs(low) < math.abs(low[1]) and math.abs(high) < math.abs(high[1]) and math.abs(close) < math.abs(open[1]) and math.abs(low) <= lowestLows )
+    LQCBull5 := LowStochCross and inTimeWindow
+if ( BearBar[1] and BullBar and math.abs(low) < math.abs(low[1]) and math.abs(high) > math.abs(high[1]) and math.abs(close) < math.abs(open[1]) and math.abs(low) <= lowestLows )
+    LQCBull4 := LowStochCross and inTimeWindow
+if ( BearBar[1] and BullBar and math.abs(low) < math.abs(low[1]) and math.abs(high) < math.abs(high[1]) and math.abs(close) > math.abs(open[1]) and math.abs(low) <= lowestLows )
+    LQCBull3 := LowStochCross and inTimeWindow
+if ( BearBar[1] and BullBar and math.abs(low) < math.abs(low[1]) and math.abs(high) > math.abs(high[1]) and math.abs(close) > math.abs(open[1]) and math.abs(close) < math.abs(high[1]) and math.abs(low) <= lowestLows  )
+    LQCBull2 := LowStochCross and inTimeWindow
+
+if ( BearBar[1] and BullBar and math.abs(low) < math.abs(low[1]) and math.abs(high) < math.abs(high[1]) and math.abs(close) > math.abs(open[1]) and math.abs(close) > math.abs(high[1]) and math.abs(low) <= lowestLows )
+    LQCBull1 := LowStochCross and inTimeWindow
+if ( BearBar and BullBar[1] and math.abs(high) > math.abs(high[1]) and math.abs(low) > math.abs(low[1]) and math.abs(close) > math.abs(open[1]) and math.abs(high) >= highestHigh ) 
+    LQCBear5 := HighStochCross and inTimeWindow
+if ( BearBar and BullBar[1] and math.abs(high) > math.abs(high[1]) and math.abs(low) < math.abs(low[1]) and math.abs(close) > math.abs(open[1]) and math.abs(high) >= highestHigh )
+    LQCBear4 := HighStochCross and inTimeWindow
+if ( BearBar and BullBar[1] and math.abs(high) > math.abs(high[1]) and math.abs(low) > math.abs(low[1]) and math.abs(close) <= math.abs(open[1]) and math.abs(high) >= highestHigh  )
+    LQCBear3 := HighStochCross and inTimeWindow
+if ( BearBar and BullBar[1] and math.abs(high) > math.abs(high[1]) and math.abs(low) < math.abs(low[1]) and math.abs(close) <= math.abs(open[1]) and math.abs(close) >= math.abs(low[1]) and math.abs(high) >= highestHigh )
+    LQCBear2 := HighStochCross and inTimeWindow
+if ( BearBar and BullBar[1] and math.abs(high) > math.abs(high[1]) and math.abs(low) < math.abs(low[1]) and math.abs(close) <= math.abs(open[1]) and math.abs(close) < math.abs(low[1]) and math.abs(high) >= highestHigh )
+    LQCBear1 := HighStochCross and inTimeWindow
+
+SPABuy = (LowTBar or BullTrain or BullEngulfing or RingLow or LQCBull1 or LQCBull2 or LQCBull3 or LQCBull4 or LQCBull5) 
+SPASell = (HighTBar or BearTrain or BearEngulfing or RingHigh or LQCBear1 or LQCBear2 or LQCBear3 or LQCBear4 or LQCBear5)
+
+if (LowStochCross and SPABuy and bbBuySignal)
+    longCondition := true
+
+if (HighStochCross and SPASell and bbSellSignal)
+    shortCondition := true
+
+if longCondition[1] or longCondition[2]
+    longCondition := false
+
+if shortCondition[1] or shortCondition[2]
+    shortCondition := false
+
+//if longCondition or shortCondition
+//    tradeAlert := true
+
+// Plot signals to chart
+plotshape(longCondition and labelson, title="LowStoch", location=location.bottom, color=color.rgb(223, 78, 194), style=shape.labelup, text="Buy" , textcolor=color.white, size=size.small)
+plotshape(shortCondition and labelson,  title="HighStoch",location=location.top, color=color.rgb(223, 78, 194), style=shape.labeldown, text="Sell" , textcolor=color.white, size=size.small)
+
+// Plot signals to chart
+plotshape(RingHigh and labelson ,  title="RingHigh",location=location.abovebar, color=color.rgb(214, 90, 73), style=shape.labeldown, text="PRH" , textcolor=color.white, size=size.small)
+plotshape(RingLow and labelson, title="RingLow", location=location.belowbar, color=color.rgb(167, 218, 163), style=shape.labelup, text="PRL" , textcolor=color.white, size=size.small)
+plotshape(BearTrain and labelson, title="BearTrain", location=location.abovebar, color=color.rgb(216, 33, 33), style=shape.labeldown, text="BearTrain" , textcolor=color.white, size=size.small)
+plotshape(BullTrain and labelson,  title="BullTrain",location=location.belowbar, color=color.rgb(8, 150, 20), style=shape.labelup, text="BullTrain" , textcolor=color.white, size=size.small)
+plotshape(BearEngulfing and labelson , title="BearEngulf", location=location.abovebar, color=color.rgb(122, 3, 3), style=shape.labeldown, text="BearEngulf" , textcolor=color.white, size=size.small)
+plotshape(BullEngulfing and labelson,  title="BullEngulf",location=location.belowbar, color=color.rgb(2, 70, 8), style=shape.labelup, text="BullEngulf" , textcolor=color.white, size=size.small)
+plotshape(HighTBar and labelson,  title="HighTBar",location=location.abovebar, color=color.rgb(223, 78, 194), style=shape.labeldown, text="TBar" , textcolor=color.white, size=size.small)
+plotshape(LowTBar and labelson, title="LowTBar", location=location.belowbar, color=color.rgb(223, 78, 194), style=shape.labelup, text="TBar" , textcolor=color.white, size=size.small)
+plotshape(LQCBull5 and lqlabelson,  title="LQCBull5",location=location.belowbar, color=#9fbbd3, style=shape.labelup, text="LQ-5" , textcolor=color.white, size=size.small)
+plotshape(LQCBull4 and lqlabelson,  title="LQCBull4",location=location.belowbar, color=color.rgb(69, 147, 211), style=shape.labelup, text="LQ-4" , textcolor=color.white, size=size.small)
+plotshape(LQCBull3 and lqlabelson,  title="LQCBull3",location=location.belowbar, color=#0887f0, style=shape.labelup, text="LQ-3" , textcolor=color.white, size=size.small)
+plotshape(LQCBull2 and lqlabelson,  title="LQCBull2",location=location.belowbar, color=color.rgb(50, 47, 235), style=shape.labelup, text="LQ-2" , textcolor=color.white, size=size.small)
+plotshape(LQCBull1 and lqlabelson,  title="LQCBull1",location=location.belowbar, color=#0509f7, style=shape.labelup, text="LQ-1" , textcolor=color.white, size=size.small)
+plotshape(LQCBear5 and lqlabelson,  title="LQCBear5",location=location.abovebar, color=color.rgb(141, 181, 214), style=shape.labeldown, text="LQ-5" , textcolor=color.white, size=size.small)
+plotshape(LQCBear4 and lqlabelson,  title="LQCBear4",location=location.abovebar, color=color.rgb(69, 147, 211), style=shape.labeldown, text="LQ-4" , textcolor=color.white, size=size.small)
+plotshape(LQCBear3 and lqlabelson,  title="LQCBear3",location=location.abovebar, color=#0887f0, style=shape.labeldown, text="LQ-3" , textcolor=color.white, size=size.small)
+plotshape(LQCBear2 and lqlabelson,  title="LQCBear2",location=location.abovebar, color=color.rgb(50, 47, 235), style=shape.labeldown, text="LQ-2" , textcolor=color.white, size=size.small)
+plotshape(LQCBear1 and lqlabelson,  title="LQCBear1",location=location.abovebar, color=#0509f7, style=shape.labeldown, text="LQ-1" , textcolor=color.white, size=size.small)
+//plotshape(BearBar , title="BearBar", location=location.abovebar, color=color.rgb(216, 33, 33), style=shape.labeldown, text="BearBar" , textcolor=color.white, size=size.small)
+//plotshape(BullBar ,  title="BullBar",location=location.belowbar, color=color.rgb(8, 150, 20), style=shape.labelup, text="BullBar" , textcolor=color.white, size=size.small)
+
+// Send alerts
+//tradeAlert := SPABuy or SPASell 
+if tradeAlert[1] == false
+    tradeAlert := (LowStochCross or HighStochCross or bbBuySignal or bbSellSignal) and inTimeWindow
+    //tradeAlert := (longCondition or shortCondition) and inTimeWindow
+    //tradeAlert := (LowStochCross or HighStochCross) and inTimeWindow
+
+alertcondition(tradeAlert, title="BOLSTOPA Alert", message="BOLSTOPA Alert!")
