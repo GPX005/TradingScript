@@ -1,0 +1,406 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    Haydos Daily Momentum v1.202 (HayDayMo) strategy
+//  Ideal      :    Hayden Stewart 
+//  Author     :    Guy Pedashenko      Original creation date: 08-Jun-24       Latest version date: 16-Jun-24
+//  Version    :    v1.202
+//  Description:    RSI out of zone, MACD crossing.  
+//                     SL High or Low of Bar[1] 
+//                     BE Crossing 50 EMA or MACD crosses back    
+//                     TP RSI hits 50% or 2:1 ?                                                      
+//-------------------------------------------------------------------------------------------------------------------------------------------
+strategy(title="HeyDayMo-S-v1.202", overlay=true)
+import TradingView/Strategy/3
+import PineCoders/Time/3
+
+// Strategy Parameters             
+backtestStartDate = input.time(timestamp("08 Jun 2023"), "Start Date")
+backtestEndDate = input.time(timestamp("07 Jun 2024"), "End Date")
+RiskFactor = input.float(title = "RiskFactor",  minval = 0.1, maxval = 20, defval = 1)       // Risk based on size of previous bar
+RewardFactor = input.float(title = "RewardFactor",  minval = 0.1, maxval = 20, defval = 2)   // Risk:Reward ratio (Reward Number)
+BarCountBack = input.int(title = "RSI BarCountBack",  minval = 1, maxval = 20, defval = 10) 
+MACDImmON = input.bool(title ="MACD Cross Imminent ON ",  defval = false)                             // MACD (Crossing is Immminent - indicatro is ON)
+MACDImmBars = input.int(title = "MACD Cross Imminent Bars",  minval = 1, maxval = 10, defval = 1)       // Gap between MACD signals has been reducing for this number of bars (Crossing is Immminent)
+RSICondition = input.bool(title = "G2G RSI+MACD Condition",  defval = true)                 // If this is false - only MACD is used as Trade Entry condition.
+RSIStrategy = input.bool(title = "RSI Strategy",  defval = false)                           // If this is true - Simple RSI enters central zone Entry condition.
+TradeLabelsOn = input.bool(title ="Show Trade Details ON ",  defval = true)                 // If this is true - trade details lables are visible.
+TradeMgtOn = input.bool(title ="Trade Management ON",  defval = false)                      // If this is true - trade management code executes.
+SLTradeMgtATRFactor = input.float(title ="Trade Mgt SL set ART %",  minval = 0.1, maxval = 10, defval = 1)                      // If this is true - trade management code executes.
+TradeMgtATRFactor = input.float(title ="Trade Mgt ART Trail %",  minval = 0.1, maxval = 10, defval = 1)                      // If this is true - trade management code executes.
+
+float fATR = 0
+fATR := ta.atr(10)                             // ATR (bars)  - to be used to set Stop Loss
+float atrRiskFactor = fATR * RiskFactor        // If using ATR for Risk calc - this is the multiplier
+
+// Strategy Variables
+nowTime = time
+inTradeWindow =  (nowTime >= backtestStartDate and nowTime <= backtestEndDate)
+int iContracts = 0             // Number of contracts for the tade - will be calculated based on account balance below.
+longCondition = false
+shortCondition = false
+bool RSICrossOutOS = false
+bool RSICrossOutOB = false
+bool RSICrossInOS = false
+bool RSICrossInOB = false
+bool MACDCrossLONG = false
+bool MACDCrossSHORT = false
+bool RSIGoForLaunchSHORT = false
+bool RSIGoForLaunchLONG = false
+bool MACDGoForLaunchSHORT = false
+bool MACDGoForLaunchLONG = false
+bool MACDCrossIminent = false
+bool RSIGoodLong = false
+bool RSIGoodShort = false
+int RSIInGotOne = 0
+int MACDCrossImmCount = 0
+
+float SLPips = 0                    // Pips from Entry price to SL
+float SLPrice = 0                   // Actual SL Price
+float TPPips = 0                    // Pips from Entry price to TP
+float TPPrice = 0                   // Actual TP Price
+float EntryPrice = 0                // Entry Price
+float stopLoss = 0
+float takeProfit = 0
+int PipFactor = 0
+float TradeRisk = 0
+float TradeReward = 0
+string gpxLabelText = ""
+
+float fEMA50 = ta.ema(close,50)
+plot(fEMA50,"50EMA",color=color.rgb(241, 13, 5))
+string SecrurityCode = str.substring(syminfo.ticker,0,6) 
+PipFactor := 100000                 // Default PipFactor             ???? Can this be calculated based on decimal places of Price - TEST this.
+
+
+// ============================================== MACD setup ============================================================================================
+fast_length = input(title = "Fast Length", defval = 12)
+slow_length = input(title = "Slow Length", defval = 26)
+src = input(title = "Source", defval = close)
+signal_length = input.int(title = "Signal Smoothing",  minval = 1, maxval = 50, defval = 9, display = display.data_window)
+sma_source = input.string(title = "Oscillator MA Type",  defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+sma_signal = input.string(title = "Signal Line MA Type", defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(src, fast_length) : ta.ema(src, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(src, slow_length) : ta.ema(src, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+abshist = math.abs(hist)
+plot(abshist,"MACD Diff",color=na)
+// =====================================================================================================================================================
+
+// ============================================== RSI setup ============================================================================================
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "Bollinger Bands" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+rsiLengthInput = input.int(6, minval=1, title="RSI Length", group="RSI Settings")
+rsiSourceInput = input.source(close, "Source", group="RSI Settings")
+rsiOBLine = input.int(title = "RSI Over bought",  minval = 55, maxval = 95, defval = 80) 
+rsiOSLine = input.int(title = "RSI Over sold",  minval = 05, maxval = 55, defval = 20) 
+rsiLabelsOn = input.bool(title = "Show RSI Labels",  defval = true)                      // If this is TRUE - show RSI Labels.
+
+up = ta.rma(math.max(ta.change(rsiSourceInput), 0), rsiLengthInput)
+down = ta.rma(-math.min(ta.change(rsiSourceInput), 0), rsiLengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+// =====================================================================================================================================================
+
+// =====================================================================================================================================================
+// Trading ENTRY Condition calculations
+// =====================================================================================================================================================
+if rsi <= rsiOSLine and rsi[1] > rsiOSLine       // 20% defval
+    RSICrossOutOS := true
+if rsi >= rsiOBLine and rsi[1] < rsiOBLine       // 80% defval
+    RSICrossOutOB := true
+
+if rsi >= rsiOSLine and rsi[1] < rsiOSLine       // 20% defval
+    RSICrossInOS := true
+if rsi <= rsiOBLine and rsi[1] > rsiOBLine       // 80% defval
+    RSICrossInOB := true
+
+if rsi >= rsiOBLine                             // 80% defval
+    RSIGoForLaunchSHORT := true    
+if rsi <= rsiOSLine                             // 20% defval
+    RSIGoForLaunchLONG := true
+ 
+if MACDImmON                                    // MACD is about to cross - it is Imminent - switched on
+    if abshist[1] > abshist
+        MACDCrossImmCount := MACDCrossImmCount[1] + 1
+    if MACDCrossImmCount >= MACDImmBars
+        MACDCrossIminent := true
+
+plot(MACDCrossImmCount,"MACDCrossImmCount",color=na)
+plot(MACDImmBars,"MACDImmBars",color=na)
+
+if macd <= signal and macd[1] > signal[1]
+    MACDCrossSHORT := true
+
+if macd >= signal and macd[1] < signal[1]
+    MACDCrossLONG := true
+
+for i = 1 to BarCountBack by 1
+    if RSICrossInOB[i]
+        RSIInGotOne := RSIInGotOne + 1
+
+for i = 1 to BarCountBack by 1
+    if RSICrossInOS[i]
+        RSIInGotOne := RSIInGotOne + 1
+
+if RSIInGotOne > 0 and (MACDCrossLONG)
+    RSIGoodLong := true
+if RSIInGotOne > 0 and (MACDCrossSHORT)
+    RSIGoodShort := true
+ 
+PlotRSIPOBOut = rsiLabelsOn and RSICrossOutOB       // Combined condistion for plot plus indicator setting to display the plots
+PlotRSIPOSOut = rsiLabelsOn and RSICrossOutOS
+plotshape(PlotRSIPOBOut,  title="RSICrossOutOB",location=location.top, color=color.rgb(236, 170, 126), style=shape.labeldown, text="OvB" , textcolor=color.white, size=size.small)
+plotshape(PlotRSIPOSOut , title="RSICrossOutOS", location=location.bottom, color=color.rgb(181, 218, 113), style=shape.labelup, text="OvS" , textcolor=color.white, size=size.small)
+//plotshape(RSICrossInOB,  title="RSICrossInOB",location=location.top, color=color.rgb(245, 103, 8), style=shape.labeldown, text="RSI-In" , textcolor=color.white, size=size.small)
+//plotshape(RSICrossInOS , title="RSICrossInOS", location=location.bottom, color=color.rgb(114, 241, 10), style=shape.labelup, text="RSI-In" , textcolor=color.white, size=size.small)
+plotshape(MACDCrossIminent , title="MACDCrossIminent", location=location.belowbar, color=color.rgb(235, 81, 189), style=shape.labelup, text="Mi" , textcolor=color.white, size=size.small)
+
+PlotRSICondLong = RSICondition and RSIGoodLong
+PlotRSICondShort = RSICondition and RSIGoodShort
+plotshape(PlotRSICondLong , title="RSIGoodLong", location=location.bottom, color=color.rgb(33, 159, 231), style=shape.labelup, text="G2G" , textcolor=color.white, size=size.small)
+plotshape(PlotRSICondShort , title="RSIGoodShort", location=location.top, color=color.rgb(33, 159, 231), style=shape.labeldown, text="G2G" , textcolor=color.white, size=size.small)
+plotshape(MACDCrossSHORT,  title="MACDCrossSHORT",location=location.abovebar, color=color.rgb(230, 12, 4), style=shape.labeldown, text="MACDSell" , textcolor=color.white, size=size.small)
+plotshape(MACDCrossLONG , title="MACDCrossLONG", location=location.belowbar, color=#116905, style=shape.labelup, text="MACDBuy" , textcolor=color.white, size=size.small)
+
+// Send alerts
+//tradeAlert = (RSIGoodLong or RSIGoodShort) 
+//alertcondition(tradeAlert, title="HeyDamMo", message="HeyDamMo-V1.0 Alert!")
+// =====================================================================================================================================================
+
+// =========================================  SECURITY SPECIFIC Variables  =============================================================================
+if str.length(SecrurityCode) < 6            // Stock & equities 
+    PipFactor := 100    
+
+if (SecrurityCode == "AUDCAD")
+    PipFactor := 100000
+    //RewardFactor:= 6
+if (SecrurityCode == "AUDCHF")
+    PipFactor := 100000    
+if (SecrurityCode == "AUDJPY")
+    PipFactor := 1000    
+if (SecrurityCode == "AUDNZD")
+    PipFactor := 100000   
+if (SecrurityCode == "AUDUSD")
+    PipFactor := 100000    
+if (SecrurityCode == "BTCUSD")
+    PipFactor := 100      
+if (SecrurityCode == "CADCHF")
+    PipFactor := 100000   
+if (SecrurityCode == "CADJPY")
+    PipFactor := 1000   
+    //RewardFactor:= 4
+if (SecrurityCode == "CHFJPY")
+    PipFactor := 1000      
+if (SecrurityCode == "EURAUD")
+    PipFactor := 100000    
+if (SecrurityCode == "EURCAD")
+    PipFactor := 100000    
+if (SecrurityCode == "EURCHF")
+    PipFactor := 100000    
+    //RewardFactor:= 8
+if (SecrurityCode == "EURGBP")
+    PipFactor := 100000    
+if (SecrurityCode == "EURJPY")
+    PipFactor := 1000    
+    //RewardFactor:= 2
+if (SecrurityCode == "EURNZD")
+    PipFactor := 100000    
+if (SecrurityCode == "EURUSD")
+    PipFactor := 100000    
+    //RewardFactor:= 3
+if (SecrurityCode == "GBPAUD")
+    PipFactor := 100000    
+if (SecrurityCode == "GBPCAD")
+    PipFactor := 100000    
+if (SecrurityCode == "GBPCHF")
+    PipFactor := 100000    
+if (SecrurityCode == "GBPJPY")
+    PipFactor := 1000    
+if (SecrurityCode == "GBPNZD")
+    PipFactor := 100000    
+if (SecrurityCode == "GBPUSD")
+    PipFactor := 100000    
+if (SecrurityCode == "USDCAD")
+    PipFactor := 100000      
+if (SecrurityCode == "NZDCAD")
+    PipFactor := 100000      
+if (SecrurityCode == "NZDCHF")
+    PipFactor := 100000      
+if (SecrurityCode == "NZDJPY")
+    PipFactor := 1000      
+    //RewardFactor:= 3
+if (SecrurityCode == "NZDUSD")
+    PipFactor := 100000     
+if (SecrurityCode == "USDCHF")
+    PipFactor := 100000      
+if (SecrurityCode == "USDJPY")
+    PipFactor := 1000      
+if (SecrurityCode == "XAUUSD")
+    PipFactor := 100                // PIP factor for GOLD
+    //RewardFactor:= 1
+if (SecrurityCode == "XAGUSD") 
+    PipFactor := 1000               // PIP factor for SILVER
+if (SecrurityCode == "NAS100") 
+    PipFactor := 10     
+if (SecrurityCode == "GER40") 
+    PipFactor := 10     
+    //RewardFactor:= 4
+if (SecrurityCode == "US30") 
+    PipFactor := 10     
+if (SecrurityCode == "UK100") 
+    PipFactor := 10    
+    //RewardFactor:= 3
+if (SecrurityCode == "AUS200") 
+    PipFactor := 10     
+    //RewardFactor:= 2
+if (SecrurityCode == "JPN225") 
+    PipFactor := 10     
+    //RewardFactor:= 2
+if (SecrurityCode == "CATTLE") 
+    PipFactor := 100000     
+if (SecrurityCode == "COCOA") 
+    PipFactor := 10    
+if (SecrurityCode == "COFFEE")   
+    PipFactor := 100    
+if (SecrurityCode == "COPPER") 
+    PipFactor := 10000    
+if (SecrurityCode == "CORN") 
+    PipFactor := 10000   
+if (SecrurityCode == "NATGAS") 
+    PipFactor := 1000    
+    //RewardFactor:= 6
+if (SecrurityCode == "OATS") 
+    PipFactor := 10000    
+if (SecrurityCode == "SOYBEA")   // Check that SecrurityCode string is OK for this!!!
+    PipFactor := 10   
+if (SecrurityCode == "WHEAT") 
+    PipFactor := 10    
+if (SecrurityCode == "OJ") 
+    PipFactor := 100    
+if (SecrurityCode == "SUGAR") 
+    PipFactor := 1000    
+    //RewardFactor:= 5
+if (SecrurityCode == "SPOTCR") 
+    PipFactor := 1000    
+
+// =========================================  TRADE ENTRY  =============================================================================================
+candleHeight = math.abs(high-low)
+candleBody = math.abs(open-close)
+
+if RSIStrategy
+    if RSICrossInOS                       // RSI Strategy Buy Trigger condition
+        TradeRisk := fATR * RiskFactor    // := candleHeight * RiskFactor 
+        TradeReward := TradeRisk * RewardFactor
+        EntryPrice := high + (5/PipFactor)    
+        SLPips := TradeRisk  
+        TPPips := TradeRisk * RewardFactor
+        TPPrice := EntryPrice + TPPips
+        SLPrice := EntryPrice - SLPips 
+        longCondition := true
+else
+    if (RSIGoodLong and RSICondition) or (MACDCrossLONG and RSICondition == false)
+        TradeRisk := fATR * RiskFactor    // := candleHeight * RiskFactor 
+        TradeReward := TradeRisk * RewardFactor
+        EntryPrice := high + (5/PipFactor)    
+        SLPips := TradeRisk  
+        TPPips := TradeRisk * RewardFactor
+        TPPrice := EntryPrice + TPPips
+        SLPrice := EntryPrice - SLPips 
+        longCondition := true
+
+if RSIStrategy                            // RSI Strategy Sell Trigger condition
+    if RSICrossInOB
+        TradeRisk := fATR * RiskFactor
+        TradeReward := TradeRisk * RewardFactor
+        EntryPrice := low  - (5/PipFactor)  
+        SLPips := candleHeight * RiskFactor  
+        TPPips := TradeRisk * RewardFactor
+        TPPrice := EntryPrice - TPPips
+        SLPrice := EntryPrice + SLPips 
+        shortCondition := true
+else
+    if (RSIGoodShort and RSICondition) or (MACDCrossSHORT and RSICondition == false)
+        TradeRisk := fATR * RiskFactor
+        TradeReward := TradeRisk * RewardFactor
+        EntryPrice := low  - (5/PipFactor)  
+        SLPips := candleHeight * RiskFactor  
+        TPPips := TradeRisk * RewardFactor
+        TPPrice := EntryPrice - TPPips
+        SLPrice := EntryPrice + SLPips 
+        shortCondition := true
+
+// Calculate Position Size (iContracts)
+float long_diff = EntryPrice - SLPrice
+float long_tp = EntryPrice + (1 * long_diff)
+float balance = (strategy.initial_capital + strategy.netprofit)
+float bal_limited = (balance > 0 ? balance : 0)
+float bal_risked = 0.01 * bal_limited
+float pos_size = (bal_risked / long_diff)
+iContracts := (int((bal_risked * PipFactor) / (long_diff * PipFactor)) )
+if iContracts < 0 
+    iContracts := iContracts * -1
+
+if (longCondition and inTradeWindow and strategy.position_size == 0) //and bullishEMAAlignment
+    //Direction := 1   
+    stopLoss := SLPrice  
+    takeProfit := TPPips * PipFactor
+    strategy.order("long", strategy.long, iContracts, stop=EntryPrice, comment = "GPX-LONG")
+    strategy.exit("exit", "long", stop=stopLoss, profit=takeProfit)
+    if TradeLabelsOn
+        gpxLabelText := str.format("Entry: {0,number,#.#####} SL: {1,number,#.#####} TP: {2,number,#.#####}", EntryPrice, stopLoss, EntryPrice + (takeProfit/PipFactor) )  
+        label.new(bar_index, low-(4.5*fATR), text=gpxLabelText, color=color.rgb(127, 163, 106), style=label.style_label_up)
+
+if (shortCondition and inTradeWindow and strategy.position_size == 0) //and bearishEMAAlignment
+    //Direction := -1   
+    stopLoss := SLPrice 
+    takeProfit := TPPips * PipFactor
+    //takeProfit := EntryPrice - (SLPips * RewardFactor)
+    strategy.order("short", strategy.short, iContracts, stop=EntryPrice, comment = "GPX-SHORT")
+    strategy.exit("exit", "short", stop=stopLoss, profit=takeProfit)
+    if TradeLabelsOn
+        gpxLabelText := str.format("Entry: {0,number,#.#####} SL: {1,number,#.#####} TP: {2,number,#.#####}", EntryPrice, stopLoss, EntryPrice - (takeProfit/PipFactor) )  
+        label.new(bar_index, high+(4.5*fATR), text=gpxLabelText, color=color.rgb(221, 125, 122), style=label.style_label_down)
+
+if ((longCondition[1] or shortCondition[1]) and strategy.position_size == 0)   // Cancle any pending orders that did not trigger.
+    strategy.cancel_all()
+
+// =====================================================================================================================================================
+
+// =========================================  TRADE Management  ========================================================================================
+if (TradeMgtOn and strategy.opentrades > 0)   // Trade is in flight
+    // work out in profit or los since Entry
+    // If in profit what multiple or ATR X risk is 
+    // if >= 1 ATR, then move SL up to low of previous bar
+    // for every multiple of ATR move - move SL to close[1]  - Trailing
+
+    gpxLabelText := str.format("{0,number,#.#####}", strategy.opentrades.entry_price(0) )  
+    //label.new(bar_index, close, text=s1)
+    gpxLONG = strategy.opentrades.entry_comment(0)
+    if gpxLONG == "GPX-LONG"
+        // Do the long calculations - Might have to get the original TP Price too
+        gpxEntry = strategy.opentrades.entry_price(0)
+        if low > gpxEntry and (close - gpxEntry) >= SLTradeMgtATRFactor*fATR
+            strategy.exit("exit",trail_price = low, trail_offset =(TradeMgtATRFactor*fATR))           // need to work out if long or short
+            gpxLabelText := str.format("New SL: {0,number,#.#####}", low )
+            label.new(bar_index, high+(3*fATR), text=gpxLabelText, color=color.rgb(231, 143, 10), style=label.style_label_down)
+    else
+        // Do the short calculations
+        gpxEntry = strategy.opentrades.entry_price(0)
+        if high < gpxEntry and (gpxEntry - close) >= SLTradeMgtATRFactor*fATR
+            strategy.exit("exit",trail_price = high, trail_offset =(TradeMgtATRFactor*fATR))           // need to work out if long or short
+            gpxLabelText := str.format("New SL: {0,number,#.#####}", high )
+            label.new(bar_index, low+(3*fATR), text=gpxLabelText, color=color.rgb(231, 143, 10), style=label.style_label_up)
+
+
+// =====================================================================================================================================================
+
+//XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX   THE END  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX

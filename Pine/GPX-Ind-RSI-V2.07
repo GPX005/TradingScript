@@ -1,0 +1,125 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-Ind-RSI v2.07 Indicator
+//  Ideal      :    Hayden Stewart 
+//  Author     :    Guy Pedashenko      Original creation date: 08-Jun-24       Latest version date: 16-Jun-24
+//  Version    :    v2.07
+//  Description:    RSI out of zone + MACD crossing.  
+//                                                    
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator(title="GPX-Ind-RSI v2.07", overlay=true)
+
+// Strategy Parameters             
+RSICondition = input.bool(title = "G2G RSI+MACD Condition",  defval = true)                 // If this is false - only MACD is used as Trade Entry condition.
+
+// Strategy Variables
+bool RSICrossOutOS = false
+bool RSICrossOutOB = false
+bool RSICrossInOS = false
+bool RSICrossInOB = false
+bool MACDCrossLONG = false
+bool MACDCrossSHORT = false
+bool RSIGoForLaunchSHORT = false
+bool RSIGoForLaunchLONG = false
+bool MACDGoForLaunchSHORT = false
+bool MACDGoForLaunchLONG = false
+bool MACDCrossIminent = false
+bool RSIGoodLong = false
+bool RSIGoodShort = false
+int RSIInGotOne = 0
+int MACDCrossImmCount = 0
+
+string gpxLabelText = ""
+
+float fEMA50 = ta.ema(close,50)
+plot(fEMA50,"50EMA",color=color.rgb(241, 13, 5))
+
+// ============================================== MACD setup ============================================================================================
+fast_length = input(title = "Fast Length", defval = 12)
+slow_length = input(title = "Slow Length", defval = 26)
+src = input(title = "Source", defval = close)
+signal_length = input.int(title = "Signal Smoothing",  minval = 1, maxval = 50, defval = 9) //, display = display.data_window)
+sma_source = input.string(title = "Oscillator MA Type",  defval = "EMA", options = ["SMA", "EMA"]) //, display = display.data_window)
+sma_signal = input.string(title = "Signal Line MA Type", defval = "EMA", options = ["SMA", "EMA"]) //, display = display.data_window)
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(src, fast_length) : ta.ema(src, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(src, slow_length) : ta.ema(src, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+abshist = math.abs(hist)
+plot(abshist,"MACD Diff",color=na)
+MACDImmON = input.bool(title = "MACD Imminent Predictor ON",  defval = false)  
+MACDImmBars = input.int(title = "MACD Imminent Bar count",  minval = 1, maxval = 10, defval = 2) 
+// =====================================================================================================================================================
+
+// ============================================== RSI setup ============================================================================================
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "Bollinger Bands" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+rsiLengthInput = input.int(6, minval=1, title="RSI Length", group="RSI Settings")
+rsiSourceInput = input.source(close, "Source", group="RSI Settings")
+rsiOBLine = input.int(title = "RSI Over bought",  minval = 55, maxval = 95, defval = 80) 
+rsiOSLine = input.int(title = "RSI Over sold",  minval = 05, maxval = 55, defval = 20) 
+rsiLabelsOn = input.bool(title = "Show RSI Labels",  defval = true)                      // If this is TRUE - show RSI Labels.
+
+up = ta.rma(math.max(ta.change(rsiSourceInput), 0), rsiLengthInput)
+down = ta.rma(-math.min(ta.change(rsiSourceInput), 0), rsiLengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+// =====================================================================================================================================================
+
+// =====================================================================================================================================================
+// Trading ENTRY Condition calculations
+// =====================================================================================================================================================
+if rsi <= rsiOSLine and rsi[1] > rsiOSLine       // 20% defval
+    RSICrossOutOS := true
+if rsi >= rsiOBLine and rsi[1] < rsiOBLine       // 80% defval
+    RSICrossOutOB := true
+
+if rsi >= rsiOSLine and rsi[1] < rsiOSLine       // 20% defval
+    RSICrossInOS := true
+if rsi <= rsiOBLine and rsi[1] > rsiOBLine       // 80% defval
+    RSICrossInOB := true
+
+if rsi >= rsiOBLine                             // 80% defval
+    RSIGoForLaunchSHORT := true    
+if rsi <= rsiOSLine                             // 20% defval
+    RSIGoForLaunchLONG := true
+ 
+if MACDImmON                                    // MACD is about to cross - it is Imminent - switched on
+    if abshist[1] > abshist
+        MACDCrossImmCount := MACDCrossImmCount[1] + 1
+    if MACDCrossImmCount >= MACDImmBars
+        MACDCrossIminent := true
+
+plot(MACDCrossImmCount,"MACDCrossImmCount",color=na)
+plot(MACDImmBars,"MACDImmBars",color=na)
+
+if macd <= signal and macd[1] > signal[1]
+    MACDCrossSHORT := true
+
+if macd >= signal and macd[1] < signal[1]
+    MACDCrossLONG := true
+
+PlotRSIPOBOut = rsiLabelsOn and RSICrossOutOB       // Combined condistion for plot plus indicator setting to display the plots
+PlotRSIPOSOut = rsiLabelsOn and RSICrossOutOS
+plotshape(PlotRSIPOBOut,  title="RSICrossOutOB",location=location.top, color=#e91009, style=shape.labeldown, text="OvB" , textcolor=color.white, size=size.small)
+plotshape(PlotRSIPOSOut , title="RSICrossOutOS", location=location.bottom, color=#08eb26, style=shape.labelup, text="OvS" , textcolor=color.white, size=size.small)
+plotshape(MACDCrossIminent , title="MACDCrossIminent", location=location.belowbar, color=color.rgb(235, 81, 189), style=shape.labelup, text="Mi" , textcolor=color.white, size=size.small)
+
+plotshape(MACDCrossSHORT,  title="MACDCrossSHORT",location=location.abovebar, color=color.rgb(230, 12, 4), style=shape.labeldown, text="MACDSell" , textcolor=color.white, size=size.small)
+plotshape(MACDCrossLONG , title="MACDCrossLONG", location=location.belowbar, color=#116905, style=shape.labelup, text="MACDBuy" , textcolor=color.white, size=size.small)
+
+// Send alerts
+tradeAlert = (PlotRSIPOBOut or PlotRSIPOSOut) 
+alertcondition(tradeAlert, title="RSI-OSOB", message="RSI-OSOB-V2 Alert!")
+// =====================================================================================================================================================
+
+
+//XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX   THE END  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX

@@ -1,0 +1,423 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I-Candle-8 (indicator) 
+//  Author     :    Guy Pedashenko      Original creation date: 02-Dec-24       Latest version date: 26-Dec-24
+//  Version    :    v1.2.040
+//  Description:    EMA's 8-20-50, Pullback to / thru 8 EMA with Close head end of bar, Slow MACD same direction, SL 30 pips, TP 5:1 Enter at close+
+//                  Next Actions: 
+//                      - 
+//                      - 
+//-------------------------------------------------------------------------------------------------------------------------------------------
+indicator("GPX-I-Candle-8 v1.2.040", overlay=true)
+
+nowTime = time
+sTestStart = "2023-12-01 00:00"
+sTestEnd = "2024-12-25 00:00"
+sDateStart = nowTime
+backtestStartDate = input.time(timestamp(sTestStart), title="Start Date") 
+backtestEndDate = input.time(timestamp(sTestEnd), title="End Date")
+inTradeWindow =  (nowTime >= backtestStartDate and nowTime <= backtestEndDate)
+sTimeWindow = input.string("0000-0000:1234567", title="Time WIndow")  // 0000-1130:1234567 Aussie time
+inTimeWindow = time(timeframe.period, sTimeWindow)   // Times are GMT  06:00am t0 09:30pm src = close
+bHardCodeParams = input.bool(false, title="Hard Coded Parameters ON")
+bUse50EMA = input.bool(false, title="Include 50EMA in Trend Calc?")
+bUse20EMA = input.bool(false, title="Include 20EMA slope Rule?")
+bSlice8EMA = input.bool(false, title="Entry condition - slice 8 EMA / touch?")
+bUseMACD = input.bool(false, title="Include MACD slope Rule?")
+bUseCloseHiLoProx = input.bool(false, title="Include Close to HiLo Proximity rule?")
+fCloseHiLoProxTarget = input.int(25, title="Close to HiLo Proximity %")
+iOrderExpireBars = input.int(1, title="Order expires Bars")
+iATRBars = 5
+bRiskPips = input.bool(false, title="Use Pips for Risk?")
+RiskFactor = input.float(0.15,minval=0.1, title="Risk factor Pips / Bar Size %")
+iSpreadPips = input.int(5,title = "Spread Pips")
+RewardFactor = input.float(3,minval=0.1, title="Reward factor")
+SLTPBuffer = input.float(5, title = "Pips to add / subtract to Entry")
+showTrendlable = input.bool(false, title="Show Trend Lables?")
+brokerTime = hour(time)
+plot(brokerTime, "Broker time", color=na)
+
+TradeLabelText= ""
+//if (bar_index % 10 == 0)
+//    TradeLabelText := str.format("GPX:{0}", bar_index)
+//    label.new(bar_index,  high+(10), text=TradeLabelText, color=#084d17 , style=label.style_label_down,textcolor=#e6e60b)
+//label.new(bar_index,  high+(fATR*10), text=TradeLabelText, color=#084d17 , style=label.style_label_down,textcolor=#e6e60b)
+
+bool LongLable = false
+bool ShortLable = false
+bool showlable = false
+int nBear = 0
+int nBull = 0
+int nTrend_GFL = 0
+int nEMA_GFL = 0
+int nMACD_GFL = 0
+int nProx_GFL = 0
+int nBlueSlopeGood = 0
+int nWe_Are_GFL = 0
+bool alertcondition = false
+
+src = close
+bool BlueSlopeGood = false
+bool CloseHighProx = false
+bool CloseLowProx = false
+float fProximity = 0
+bool BearBar = false
+bool BullBar = false 
+bool trendingLong = false
+bool trendingShort = false
+bool Touching8EMA = false
+bool Slicing8EMA = false
+bool GoForLaunchMacd = false
+bool GoForLaunch8EMA = false
+bool GoForLaunchProx = false
+bool GoforLaunchLong = false
+bool GoforLaunchShort = false
+bool GoShortLable = false
+bool GoLongLable = false
+float fATR = ta.atr(iATRBars) 
+float candleHeight = math.abs(high-low)
+bool isBigBar = false
+float ARTPercent = 0
+
+
+//---------------- Strategy Tester Variable set up ----------------------------
+float SLPips = 0                    // Pips from Entry price to SL
+float SLPrice = 0                   // Actual SL Price
+float TPPips = 0                    // Pips from Entry price to TP
+float TPPrice = 0                   // Actual TP Price
+float EntryPrice = 0                // Entry Price
+float stopLoss = 0
+float takeProfit = 0
+float gpfSLATR = 0
+float TBAR4Risk = 0
+float TBAR4Reward = 0
+//int PipFactor = 10000              // Default PipFactor
+PipFactor = 1/syminfo.mintick/10     // Default PipFactor
+
+float iContracts = 0
+int Direction = 0
+string SecrurityCode = str.substring(syminfo.ticker,0,6)             
+
+
+//++++++++++++++++++++++ Hard Coded Parameters +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+if bHardCodeParams == true
+    if (SecrurityCode == "COCOA")
+        bUse50EMA := false
+        bUse20EMA := false
+        bSlice8EMA := true
+        bUseMACD := false
+        bUseCloseHiLoProx := false
+        fCloseHiLoProxTarget := 25
+        bRiskPips := true
+        RiskFactor := 10
+        iSpreadPips := 9
+        RewardFactor := 5
+        SLTPBuffer := 15
+    if (SecrurityCode == "UK100") 
+        bUse50EMA := false
+        bUse20EMA := false
+        bSlice8EMA := false
+        bUseMACD := true
+        bUseCloseHiLoProx := true
+        fCloseHiLoProxTarget := 37
+        bRiskPips := false
+        RiskFactor := 0.1
+        iSpreadPips := 1
+        RewardFactor := 4
+        SLTPBuffer := 5
+    if (SecrurityCode == "CHFJPY") 
+        bUse50EMA := false
+        bUse20EMA := false
+        bSlice8EMA := false
+        bUseMACD := true
+        bUseCloseHiLoProx := true
+        fCloseHiLoProxTarget := 25
+        bRiskPips := true
+        RiskFactor := 5
+        iSpreadPips := 4
+        RewardFactor := 6
+        SLTPBuffer := 16
+    if (SecrurityCode == "GER40") 
+        bUse50EMA := false
+        bUse20EMA := false
+        bSlice8EMA := true
+        bUseMACD := false
+        bUseCloseHiLoProx := false
+        fCloseHiLoProxTarget := 40
+        bRiskPips := false
+        RiskFactor := 0.1
+        iSpreadPips := 2
+        RewardFactor := 2
+        SLTPBuffer := 30
+    if (SecrurityCode == "XAUUSD")
+        bUse50EMA := true
+        bUse20EMA := false
+        bSlice8EMA := false
+        bUseMACD := false
+        bUseCloseHiLoProx := true
+        fCloseHiLoProxTarget := 33
+        bRiskPips := false
+        RiskFactor := 0.5
+        iSpreadPips := 1
+        RewardFactor := 4.5
+        SLTPBuffer := 5
+    if (SecrurityCode == "CATTLE") 
+        bUse50EMA := true
+        bUse20EMA := false
+        bSlice8EMA := false
+        bUseMACD := false
+        bUseCloseHiLoProx := false
+        fCloseHiLoProxTarget := 25
+        bRiskPips := true
+        RiskFactor := 19
+        iSpreadPips := 8
+        RewardFactor := 2
+        SLTPBuffer := 13
+    if (SecrurityCode == "TSLA") 
+        bUse50EMA := false
+        bUse20EMA := false
+        bSlice8EMA := false
+        bUseMACD := false
+        bUseCloseHiLoProx := false
+        fCloseHiLoProxTarget := 25
+        bRiskPips := false
+        RiskFactor := 0.1
+        iSpreadPips := 1
+        RewardFactor := 2
+        SLTPBuffer := 5
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+candleBody = math.abs(open-close)
+barlow = math.abs(low)
+barhigh = math.abs(high)
+
+//---------------- Set up EMA's -------------------------------------------------
+len8 = 8
+len20 = 20
+len50 = 50
+offset = 0
+ema8 = ta.ema(src, len8)
+ema20 = ta.ema(src, len20)
+ema50 = ta.ema(src, len50)
+plot(ema8, title="EMA08", color=color.rgb(196, 216, 17), offset=offset)
+plot(ema20, title="EMA20", color=color.rgb(59, 102, 194), offset=offset)
+plot(ema50, title="EMA50", color= color.rgb(233, 10, 39), offset=offset)
+ARTPercent := candleHeight  / fATR * 100
+plot(fATR, "ATR", color=na)
+plot(ARTPercent, "ATR%", color=na)
+plot(PipFactor, "Pip Factor" , color=na)
+
+// ============ MACD setup ============================================
+fast_length = 16
+slow_length = 22
+macdsrc = close
+signal_length =  9 
+sma_source = "EMA"
+sma_signal = "EMA"
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(macdsrc, fast_length) : ta.ema(macdsrc, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(macdsrc, slow_length) : ta.ema(macdsrc, slow_length)
+//fast_ma = ta.sma(macsrc, fast_length) 
+//slow_ma = ta.ema(macsrc, slow_length)
+macd = fast_ma - slow_ma
+macd_signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+//macd_signal = ta.ema(macd, signal_length)
+// Calculating
+hist = macd_signal - macd_signal[1]
+abshist = math.abs(hist)
+
+
+//---------------- Trading Strategy Rules Logic -------------------------
+//if candleHeight >= fATR * BigBarARTFactor
+//    isBigBar := true
+
+if close < open
+    BearBar := true
+    nBear := -1
+if close >= open
+    BullBar := true
+    nBull := 1
+
+//---------------->  Determine if in LONG or SHORT trend
+if bUse50EMA
+    if ema8 > ema20 and ema20 > ema50
+        trendingLong := true
+        nTrend_GFL := 1
+        showlable := true
+        if trendingLong[1]
+            showlable := false
+    if ema8 < ema20 and ema20 < ema50
+        trendingShort := true
+        nTrend_GFL := -1
+        showlable := true
+        if trendingShort[1]
+            showlable := false
+else
+    if ema8 > ema20 
+        trendingLong := true
+        nTrend_GFL := 1
+        showlable := true
+        if trendingLong[1]
+            showlable := false
+    if ema8 < ema20 
+        trendingShort := true
+        nTrend_GFL := -1
+        showlable := true
+        if trendingShort[1]
+            showlable := false
+
+//---------------->  Determine if EMA Touch / Slice Rule passes
+if trendingLong and low <= ema8 and bSlice8EMA == false and BearBar
+    GoForLaunch8EMA := true
+    nEMA_GFL := 1
+
+if trendingShort and high >= ema8 and bSlice8EMA == false and BullBar
+    GoForLaunch8EMA := true
+    nEMA_GFL := 1
+
+if trendingLong and close < ema8 and bSlice8EMA and BearBar
+    GoForLaunch8EMA := true
+    nEMA_GFL := 1
+
+if trendingShort and close > ema8 and bSlice8EMA and BullBar
+    GoForLaunch8EMA := true
+    nEMA_GFL := 1
+
+//---------------->  Determine if 20 EMA is sloping in support of direction
+if (trendingLong and ema20 > ema20[1]) or (trendingShort and ema20 < ema20[1])
+    BlueSlopeGood := true
+    nBlueSlopeGood := 1
+
+//---------------->  Determine if MACD supporint angle Rule passes
+if trendingLong and macd_signal >= macd_signal[1]
+    GoForLaunchMacd := true
+    nMACD_GFL := 1
+
+if trendingShort and macd_signal <= macd_signal[1]
+    GoForLaunchMacd := true
+    nMACD_GFL := 1
+
+//---------------->  Determine if Proximity to Close Rule passes
+if trendingLong
+    fProximity := ((close - low) / candleHeight) * 100
+    if fProximity <= fCloseHiLoProxTarget
+        GoForLaunchProx := true
+        nProx_GFL := 1
+
+if trendingShort
+    fProximity := ((high - close) / candleHeight) * 100
+    if fProximity <= fCloseHiLoProxTarget
+        GoForLaunchProx := true
+        nProx_GFL := 1
+
+//---------------->  If all Rule pass - we are Go-For-Launch Huston
+if bUseMACD
+    if trendingLong and (GoForLaunch8EMA and GoForLaunchMacd) and ((bUseCloseHiLoProx == false) or (bUseCloseHiLoProx and GoForLaunchProx)) and ((bUse20EMA == false) or (bUse20EMA and BlueSlopeGood))
+        GoforLaunchLong := true
+        nWe_Are_GFL := 1
+
+    if trendingShort and (GoForLaunch8EMA and GoForLaunchMacd ) and ((bUseCloseHiLoProx == false) or (bUseCloseHiLoProx and GoForLaunchProx)) and ((bUse20EMA == false) or (bUse20EMA and BlueSlopeGood))
+        GoforLaunchShort := true
+        nWe_Are_GFL := -1
+else
+    if trendingLong and (GoForLaunch8EMA) and ((bUseCloseHiLoProx == false) or (bUseCloseHiLoProx and GoForLaunchProx)) and ((bUse20EMA == false) or (bUse20EMA and BlueSlopeGood))
+        GoforLaunchLong := true
+        nWe_Are_GFL := 1
+    if trendingShort and (GoForLaunch8EMA) and ((bUseCloseHiLoProx == false) or (bUseCloseHiLoProx and GoForLaunchProx)) and ((bUse20EMA == false) or (bUse20EMA and BlueSlopeGood))
+        GoforLaunchShort := true
+        nWe_Are_GFL := -1
+
+if (GoforLaunchLong) // and inTimeWindow)
+    GoLongLable := true
+if (GoforLaunchShort) // and inTimeWindow)
+    GoShortLable := true
+
+plot(fProximity, "Close HiLo Proximity" , color=na)
+plot(nBear+nBull, "Bull-Bear Bar" , color=na)
+plot(nTrend_GFL,"Trend-GFL",color=na)
+plot(nEMA_GFL,"EMA-GFL",color=na)
+plot(nMACD_GFL,"MACD-GFL",color=na)
+plot(nProx_GFL,"PROX-GFL",color=na)
+plot(nBlueSlopeGood,"BlueSlope-GFL",color=na)
+plot(nWe_Are_GFL,"WE-ARE-GFL",color=na)
+plot(strategy.opentrades,"Open Trades",color=na)
+plotshape(GoLongLable, style=shape.triangleup, location=location.belowbar, color=#1fee64, size=size.tiny)
+plotshape(GoShortLable, style=shape.triangledown, location=location.abovebar, color=color.rgb(175, 31, 5), size=size.tiny)
+
+showlonglable = trendingLong and showlable and showTrendlable //and inTimeWindow
+showshortlable = trendingShort and showlable and showTrendlable //and inTimeWindow
+showkissing = (trendingLong == false and trendingShort == false) and showTrendlable //and inTimeWindow
+
+plotshape(showlonglable, style=shape.diamond, location=location.bottom, color=#0fdb0f, size=size.tiny )
+plotshape(showshortlable, style=shape.diamond, location=location.bottom, color=#f51909, size=size.tiny )
+plotshape(showkissing, style=shape.xcross, location=location.bottom, color=color.rgb(191, 201, 209), size=size.tiny )
+
+//************ TRADE SETUP & EXECUTE *********************************************
+if GoforLaunchLong
+    if bRiskPips                            // Use Pips not %
+        TBAR4Risk := RiskFactor  / PipFactor
+    else
+        TBAR4Risk := candleHeight * RiskFactor
+    TBAR4Reward := TBAR4Risk * RewardFactor
+    //EntryPrice := close + (SLTPBuffer/PipFactor)  
+    EntryPrice := close + (iSpreadPips/PipFactor) + (SLTPBuffer/PipFactor)  
+    SLPips := TBAR4Risk  
+    TPPips := TBAR4Reward //  / PipFactor
+    TPPrice := EntryPrice + TPPips
+    SLPrice := EntryPrice - SLPips 
+    //longCondition := true
+
+if GoforLaunchShort
+    if bRiskPips                                // Use Pips not %
+        TBAR4Risk := RiskFactor / PipFactor
+    else
+        TBAR4Risk := candleHeight * RiskFactor
+    TBAR4Reward := TBAR4Risk * RewardFactor
+    //EntryPrice := close - (SLTPBuffer/PipFactor)  
+    EntryPrice := close - (iSpreadPips/PipFactor) - (SLTPBuffer/PipFactor)  
+    SLPips := TBAR4Risk  
+    TPPips := TBAR4Reward // / PipFactor
+    TPPrice := EntryPrice - TPPips
+    SLPrice := EntryPrice + SLPips 
+    //shortCondition := true
+
+// Calculate Position Size (iContracts)
+float long_diff = EntryPrice - SLPrice
+float long_tp = EntryPrice + (1 * long_diff)
+float balance = (strategy.initial_capital + strategy.netprofit)
+float bal_limited = (balance > 0 ? balance : 0)
+float bal_risked = 0.01 * bal_limited
+
+//float pos_size = (bal_risked / long_diff)
+iContracts := (int((bal_risked * PipFactor) / (long_diff * PipFactor)) )
+
+if iContracts < 0 
+    iContracts := iContracts * -1
+
+if (GoforLaunchLong and inTradeWindow and strategy.opentrades == 0) //and bullishEMAAlignment   and inTimeWindow 
+    Direction := 1   
+    stopLoss := SLPrice  
+    takeProfit := TBAR4Reward * PipFactor * 10
+
+if (GoforLaunchShort and inTradeWindow and strategy.opentrades == 0) //and bearishEMAAlignment  and inTimeWindow
+    Direction := -1   
+    stopLoss := SLPrice 
+    takeProfit := TBAR4Reward * PipFactor * 10
+    
+plot(Direction,"Trade Direction",color=na)
+plot(candleHeight,"candleHeight",color=na)
+plot(iContracts,"iContracts",color=na)
+plot(TBAR4Risk,"TBAR4Risk", color = na)
+plot(TBAR4Reward,"TBAR4Reward", color = na)
+plot(stopLoss,"stopLoss",color=na)
+plot(takeProfit,"takeProfit",color=na)
+plot(TPPips,"TPPips",color=na)
+plot(syminfo.mintick,"Min Tick",color=na) 
+plot(EntryPrice,"Entry",color=na)
+plot(SLPrice,"SL Price",color=na)
+plot(TPPrice,"TP Price",color=na)
+
+alertcondition := (GoforLaunchLong or GoforLaunchShort) and inTimeWindow and inTradeWindow
+
+alertcondition(alertcondition, title = 'C8 Entry Alert', message = 'C8 Entry Alert')

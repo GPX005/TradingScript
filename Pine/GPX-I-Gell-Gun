@@ -1,0 +1,145 @@
+//@version=5
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//  Script Name:    GPX-I-Gell-Gun (Indicator) 
+//  Author     :    Guy Pedashenko      Original creation date: 21-Nov-24       Latest version date: 28-Nov-24
+//  Version    :    v1.0
+//  Description:    EMA's 8-20-50, Watch Line break out 
+//                  Next Actions: 
+//                      - Set up MACD and 20 EMA condition vars
+//                      - Set up entry, SL, TP and 
+//                      - Turn into Strategy         
+//-------------------------------------------------------------------------------------------------------------------------------------------
+//indicator("GPX-I-Gell-Gun-Rev v1.0", overlay=true, timeframe="", timeframe_gaps=true)
+indicator("GPX-I-Gell-Gun-Rev v1.60", overlay = true, max_lines_count = 500)
+//indicator("SR Zones Multi-TF", overlay = true, max_lines_count = 500)
+tfInput = input.timeframe("", "", inline = "1")
+zoneBarMax = input.int(26, "Max bars in a zone")
+[thigh, tlow, tclose, ttime, tbar_index] = request.security(syminfo.tickerid, tfInput, [high, low, close, time, bar_index])
+
+len8 = input.int(8, minval=1, title="Length08")
+len20 = input.int(20, minval=1, title="Length20")
+len50 = input.int(50, minval=1, title="Length50")
+iNumBars = input.int(5,minval=1, title="ATR Bars")
+BigBarARTFactor = input.float(2)
+sTimeWindow = input.string("0000-0000:1234567", title="Time WIndow")  // 0000-1130:1234567 Aussie time
+inTimeWindow = time(timeframe.period, sTimeWindow)   // Times are GMT  06:00am t0 09:30pmsrc = close
+brokerTime = hour(time)
+plot(brokerTime, "Broker time", color=na)
+
+var watch_line = line.new(0, 0, 0, 0, xloc.bar_time, extend.none, na, line.style_solid, 1)
+bool WatchlineCrossed = false
+bool DrawWatchLine = false
+
+src = close
+bool longCondition = false
+bool shortCondition = false
+bool showlable = false
+bool GoForLaunchMacd = false
+bool GoForLaunch20EMA = false
+bool GoforLaunchLong = false
+bool GoforLaunchShort = false
+float fATR = ta.atr(iNumBars) 
+float candleHeight = math.abs(high-low)
+float WatchLineVal = 0
+bool isBigBar = false
+float ARTPercent = 0
+
+if candleHeight >= fATR * BigBarARTFactor
+    isBigBar := true
+
+//---------------- Set up EMA's -----------------------------------------
+offset = 0
+out8 = ta.ema(src, len8)
+out20 = ta.ema(src, len20)
+out50 = ta.ema(src, len50)
+plot(out8, title="EMA08", color=color.rgb(196, 216, 17), offset=offset)
+plot(out20, title="EMA20", color=color.rgb(59, 102, 194), offset=offset)
+plot(out50, title="EMA50", color=color.rgb(233, 10, 39), offset=offset)
+ARTPercent := candleHeight  / fATR * 100
+plot(fATR, "ATR", color=na)
+plot(ARTPercent, "ATR%", color=na)
+
+// ============ MACD setup ============================================
+fast_length = input(title = "Fast Length", defval = 12)
+slow_length = input(title = "Slow Length", defval = 26)
+macsrc = input(title = "Source", defval = close)
+signal_length = input.int(title = "Signal Smoothing",  minval = 1, maxval = 50, defval = 9, display = display.data_window)
+sma_source = input.string(title = "Oscillator MA Type",  defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+sma_signal = input.string(title = "Signal Line MA Type", defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(macsrc, fast_length) : ta.ema(macsrc, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(macsrc, slow_length) : ta.ema(macsrc, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+abshist = math.abs(hist)
+plot(abshist,"MACD Diff",color=na)
+// =====================================================================
+
+
+//---------------- Rules Logic -----------------------------------------
+if out8 >= out20 and out20 >= out50
+    longCondition := true
+    showlable := true
+    if longCondition[1]
+        showlable := false
+if out8 <= out20 and out20 <= out50
+    shortCondition := true
+    WatchLineVal := 1000000
+    showlable := true
+    if shortCondition[1]
+        showlable := false
+
+if longCondition and isBigBar and low < out8
+    WatchlineCrossed := true
+    WatchLineVal := low
+if shortCondition and isBigBar and high > out8
+    WatchlineCrossed := true
+    WatchLineVal := high
+plot(WatchLineVal,"WatchLineVal",color=na)
+plot(WatchLineVal[1],"WatchLineVal[1]",color=na)
+plot(WatchLineVal[2],"WatchLineVal[2]",color=na)
+plot(WatchLineVal[3],"WatchLineVal[3]",color=na)
+
+if (WatchlineCrossed[1] or WatchlineCrossed[2] or WatchlineCrossed[3]) 
+    if longCondition
+        if out20 < out20[1]
+            GoForLaunch20EMA := true
+        if fast_ma < fast_ma[1]
+            GoForLaunchMacd := true
+    if shortCondition
+        if out20 > out20[1]
+            GoForLaunch20EMA := true
+        if fast_ma > fast_ma[1]
+            GoForLaunchMacd := true
+
+if WatchlineCrossed
+    if longCondition
+        watch_line := line.new(x1=bar_index[5], y1=low, x2=bar_index, y2=low, color=#fd0707, width=1)
+    if shortCondition
+        watch_line := line.new(x1=bar_index[5], y1=high, x2=bar_index, y2=high, color=#2ee90e, width=1)
+    line.set_extend(watch_line, extend=extend.right)
+    line.set_extend(watch_line[1], extend=extend.none)
+
+if longCondition and (GoForLaunch20EMA and GoForLaunchMacd )
+    if (low < WatchLineVal or low < WatchLineVal[1] or low < WatchLineVal[2] or low < WatchLineVal[3]) and ((WatchLineVal + WatchLineVal[1] + WatchLineVal[2] + WatchLineVal[3]) > 0) and GoforLaunchShort[1] == false
+        GoforLaunchShort := true
+if shortCondition and (GoForLaunch20EMA and GoForLaunchMacd )
+    if ((high > WatchLineVal) or (high > WatchLineVal[1]) or (high >  WatchLineVal[2]) or (high >  WatchLineVal[3]))  and (GoforLaunchLong[1] == false)  //and ((WatchLineVal + WatchLineVal[1] + WatchLineVal[2] + WatchLineVal[3]) < 1000000)
+        GoforLaunchLong := true
+
+plotshape(WatchlineCrossed, style=shape.diamond, location = location.abovebar, color=#eb19cf, size=size.tiny )
+plotshape(GoforLaunchLong, style=shape.triangleup, location=location.belowbar, color=#1fee64, size=size.small )
+plotshape(GoforLaunchShort, style=shape.triangledown, location=location.abovebar, color=color.rgb(175, 31, 5), size=size.small )
+
+//if (longCondition and show label and inTradeWindow)
+showlonglable = longCondition and showlable and inTimeWindow
+showshortlable = shortCondition and showlable and inTimeWindow
+showkissing = (shortCondition == false and longCondition == false)
+
+plotshape(showlonglable, style=shape.diamond, location=location.bottom, color=#0fdb0f, size=size.small )
+plotshape(showshortlable, style=shape.diamond, location=location.bottom, color=#f51909, size=size.small )
+plotshape(showkissing, style=shape.xcross, location=location.bottom, color=color.rgb(191, 201, 209), size=size.tiny )
+
+
+alertcondition(showlonglable or showshortlable, title = 'Gell-Gun-Rev', message = 'Gell-Gun-Rev')
